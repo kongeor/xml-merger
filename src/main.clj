@@ -48,11 +48,11 @@
   create index if not exists files_region_patentid_idx on files(region, patentid);
 
   create table if not exists patents (
-    id biging auto_increment primary key,
+    id bigint auto_increment primary key,
     region varchar(2),
     patentid varchar(20),
-    count
-  )
+    count int
+  );
 
   "]))
 
@@ -84,23 +84,26 @@
 (defn q [ds]
   (jdbc/execute! ds-opts ["select region, patentid, count(*) as cnt from files group by region, patentid having cnt > 1"]))
 
-(defn q2 [ds]
-  (jdbc/execute! ds-opts ["select * from files where patentid = '2681204'"]))
+(defn patent-files-q [ds patentid]
+  (jdbc/execute! ds-opts ["select * from files where patentid = ?" patentid]))
 
 (comment
-  (let [entries (q2 ds-opts)
+  (q2 ds-opts))
+
+(comment
+  (let [entries (patent-files-q ds-opts "2681204")
         patent-id (-> entries first :patentid)
         files (map :file entries)]
     (merger/merge-and-write "resources/output" patent-id files)))
 
 (comment
-  (clojure.pprint/pprint (q2 ds-opts)))
+  (clojure.pprint/pprint (q ds-opts)))
 
 (def batch-size 200)
 
 ;; processing
 
-(defn process-dataset []
+(defn process-files []
   (let [all-files (filter valid-file? (filter xml-file? (file-seq (io/file "resources/dataset"))))
         batches (partition-all 200 all-files)]
     (doall
@@ -109,9 +112,70 @@
           (clojure.tools.logging/info "Processing batch" idx)
           (insert-files ds-opts batch)) batches))))
 
-(defn process-dataset []
-  )
+(comment
+  (process-files))
 
 (comment
-  (process-dataset))
+  (count (jdbc/execute! ds-opts ["select region, patentid, count(*) as cnt from files group by region, patentid"])))
 
+(comment
+  (jdbc/execute! ds-opts ["select * from patents"]))
+
+
+(defn q3 [ds]
+  (jdbc/execute! ds-opts ["select region, patentid, count(*) as cnt from files group by region, patentid having"]))
+
+(defn process-patents []
+  (reduce
+    (fn [_ row]
+      (jdbc/execute-one! ds
+        (concat
+          ["insert into patents(region, patentid, count) values(?, ?, ?)" (:region row) (:patentid row) (:cnt row)])))
+    nil
+    (jdbc/plan ds-opts ["select region, patentid, count(*) as cnt from files group by region, patentid"])))
+
+(comment
+  (process-patents))
+
+(def file-count-size 1000)
+
+(def output-dir "resources/output")
+
+(defn process-region-batch [region batch-idx]
+  (let [limit file-count-size
+        offset (* batch-idx file-count-size)
+        folder (str output-dir "/" region "/" batch-idx)]
+    (println (str "Processing " region " batch id " batch-idx))
+    (.mkdirs (java.io.File. folder))
+    (reduce
+      (fn [_ row]
+        (let [files (patent-files-q ds-opts (:patentid row))]
+          (merger/merge-and-write folder (:patentid row) (map :file files))))
+      nil
+      (jdbc/plan ds-opts ["select region, patentid, from patents where region = ? limit ? offset ?" region limit offset]))))
+
+(comment
+  (.mkdirs (java.io.File. "resources/output/yo1/man")))
+
+(comment
+  (process-region-batch "WO" 0))
+
+(defn regions-counts-q [ds]
+  (jdbc/execute! ds-opts ["select region, count(*) as cnt from patents group by region"]))
+
+(defn process-region [{:keys [region cnt]}]
+  (let [batch-ids (range 0 (inc (int (/ cnt file-count-size))))]
+    (doall (pmap #(process-region-batch region %) batch-ids))
+    #_(doall (map #(process-region-batch region %) batch-ids))))
+
+
+
+#_(regions-counts-q ds-opts)
+
+#_(range (inc (int (/ 2300 1000))))
+
+(defn process-regions []
+  (doall (map process-region (regions-counts-q ds-opts))))
+
+(comment
+  (process-regions))
