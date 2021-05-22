@@ -14,7 +14,7 @@ jobs:
       - name: Install clojure tools
         uses: DeLaGuardo/setup-clojure@3.2
         with:
-          cli: 1.0.206
+          cli: 1.10.3
       - name: Build project
         run: clojure -X:uberjar :jar out/xml-merger-${{ github.ref }}.jar
       - name: Upload artifcat
