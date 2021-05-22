@@ -1,4 +1,4 @@
-name: Java Release
+name: Clojure Release
 
 on:
   create:
@@ -11,6 +11,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v1
+      - name: Install clojure tools
+        uses: DeLaGuardo/setup-clojure@3.2
+        with:
+          cli: 1.0.206
       - name: Build project
         run: clojure -X:uberjar :jar out/xml-merger-${{ github.ref }}.jar
       - name: Upload artifcat
