@@ -3,7 +3,10 @@
             [clojure.java.io :as io]
             [clojure.string :as string]
             [next.jdbc.result-set :as rs]
-            [merger]))
+            [clojure.tools.cli :as cli]
+            [clojure.tools.logging :as log]
+            [merger])
+  (:gen-class))
 
 (defn xml-file? [f]
   (.endsWith (str f) ".xml"))
@@ -30,11 +33,11 @@
 
 ;; db stuff
 
-(def db {:dbtype "h2" :dbname "resources/db/patents"})
+#_(def db {:dbtype "h2" :dbname "resources/db/patents"})
 
-(def ds (jdbc/get-datasource db))
+#_(def ds (jdbc/get-datasource db))
 
-(def ds-opts (jdbc/with-options ds {:builder-fn rs/as-unqualified-lower-maps}))
+#_(def ds-opts (jdbc/with-options ds {:builder-fn rs/as-unqualified-lower-maps}))
 
 (defn create-tables [ds]
   (jdbc/execute! ds ["
@@ -82,10 +85,10 @@
 
 
 (defn q [ds]
-  (jdbc/execute! ds-opts ["select region, patentid, count(*) as cnt from files group by region, patentid having cnt > 1"]))
+  (jdbc/execute! ds ["select region, patentid, count(*) as cnt from files group by region, patentid having cnt > 1"]))
 
 (defn patent-files-q [ds patentid]
-  (jdbc/execute! ds-opts ["select * from files where patentid = ?" patentid]))
+  (jdbc/execute! ds ["select * from files where patentid = ?" patentid]))
 
 (comment
   (q2 ds-opts))
@@ -103,17 +106,17 @@
 
 ;; processing
 
-(defn process-files []
-  (let [all-files (filter valid-file? (filter xml-file? (file-seq (io/file "resources/dataset"))))
+(defn process-dataset-files [ds patent-dir]
+  (let [all-files (filter valid-file? (filter xml-file? (file-seq (io/file patent-dir))))
         batches (partition-all 200 all-files)]
     (doall
       (map-indexed
         (fn [idx batch]
           (clojure.tools.logging/info "Processing batch" idx)
-          (insert-files ds-opts batch)) batches))))
+          (insert-files ds batch)) batches))))
 
 (comment
-  (process-files))
+  (process-dataset-files))
 
 (comment
   (count (jdbc/execute! ds-opts ["select region, patentid, count(*) as cnt from files group by region, patentid"])))
@@ -123,36 +126,36 @@
 
 
 (defn q3 [ds]
-  (jdbc/execute! ds-opts ["select region, patentid, count(*) as cnt from files group by region, patentid having"]))
+  (jdbc/execute! ds ["select region, patentid, count(*) as cnt from files group by region, patentid having"]))
 
-(defn process-patents []
+(defn process-patents [ds]
   (reduce
     (fn [_ row]
       (jdbc/execute-one! ds
         (concat
           ["insert into patents(region, patentid, count) values(?, ?, ?)" (:region row) (:patentid row) (:cnt row)])))
     nil
-    (jdbc/plan ds-opts ["select region, patentid, count(*) as cnt from files group by region, patentid"])))
+    (jdbc/plan ds ["select region, patentid, count(*) as cnt from files group by region, patentid"])))
 
 (comment
   (process-patents))
 
-(def file-count-size 1000)
+#_(def file-count-size 1000)
 
-(def output-dir "resources/output")
+#_(def output-dir "resources/output")
 
-(defn process-region-batch [region batch-idx]
-  (let [limit file-count-size
-        offset (* batch-idx file-count-size)
+(defn process-region-batch [ds output-dir folder-file-count region batch-idx]
+  (let [limit folder-file-count
+        offset (* batch-idx folder-file-count)
         folder (str output-dir "/" region "/" batch-idx)]
-    (println (str "Processing " region " batch id " batch-idx))
+    (log/info "Processing " region " batch id " batch-idx)
     (.mkdirs (java.io.File. folder))
     (reduce
       (fn [_ row]
-        (let [files (patent-files-q ds-opts (:patentid row))]
+        (let [files (patent-files-q ds (:patentid row))]
           (merger/merge-and-write folder (:patentid row) (map :file files))))
       nil
-      (jdbc/plan ds-opts ["select region, patentid, from patents where region = ? limit ? offset ?" region limit offset]))))
+      (jdbc/plan ds ["select region, patentid, from patents where region = ? limit ? offset ?" region limit offset]))))
 
 (comment
   (.mkdirs (java.io.File. "resources/output/yo1/man")))
@@ -161,11 +164,11 @@
   (process-region-batch "WO" 0))
 
 (defn regions-counts-q [ds]
-  (jdbc/execute! ds-opts ["select region, count(*) as cnt from patents group by region"]))
+  (jdbc/execute! ds ["select region, count(*) as cnt from patents group by region"]))
 
-(defn process-region [{:keys [region cnt]}]
-  (let [batch-ids (range 0 (inc (int (/ cnt file-count-size))))]
-    (doall (pmap #(process-region-batch region %) batch-ids))
+(defn process-region [ds output-dir n {:keys [region cnt]}]
+  (let [batch-ids (range 0 (inc (int (/ cnt n))))]
+    (doall (pmap #(process-region-batch ds output-dir n region %) batch-ids))
     #_(doall (map #(process-region-batch region %) batch-ids))))
 
 
@@ -174,8 +177,90 @@
 
 #_(range (inc (int (/ 2300 1000))))
 
-(defn process-regions []
-  (doall (map process-region (regions-counts-q ds-opts))))
+(defn process-regions [ds output-dir n]
+  (let [regions (regions-counts-q ds)]
+    (doall (map #(process-region ds output-dir n %) regions))))
 
 (comment
   (process-regions))
+
+
+(defn start! [opts]
+  (let [ds (jdbc/get-datasource {:dbtype "h2" :dbname (str (:db-dir opts) "/patents")})
+        ds-opts (jdbc/with-options ds {:builder-fn rs/as-unqualified-lower-maps})]
+    (create-tables ds-opts)
+    (process-dataset-files ds-opts (:patent-dir opts))
+    (process-patents ds)
+    (process-regions ds-opts (:output-dir opts) (:dir-file-count opts))))
+
+;; cli
+
+(defn usage [options-summary]
+  (->> ["This is my program. There are many like it, but this one is mine."
+        ""
+        "Usage: program-name [options] action"
+        ""
+        "Options:"
+        options-summary
+        ""
+        "Actions:"
+        "  start    Start a new server"
+        "  stop     Stop an existing server"
+        "  status   Print a server's status"
+        ""
+        "Please refer to the manual page for more information."]
+    (string/join \newline)))
+
+(defn error-msg [errors]
+  (str "The following errors occurred while parsing your command:\n\n"
+    (string/join \newline errors)))
+
+(def cli-options
+  ;; An option with a required argument
+  [["-d" "--db-dir DB_DIR" "Temporary database folder"
+    :validate [#(not
+                  (do
+                    (println ">" %)
+                    (nil? %)))]]
+   ;; A non-idempotent option (:default is applied first)
+   ["-p" "--patent-dir PATENT_DIR" "Patent directory. Folder containing folders such as CN20140101, US20140225 etc."]
+   ["-o" "--output-dir OUT_DIR" "Output directory. Folder to store the grouped patents. "]
+   ["-n" "--dir-file-count DIR_FILE_COUNT" "How many files each foldr should contain."
+    :parse-fn #(Integer/parseInt %)]
+   ["-h" "--help"]])
+
+(defn validate-args
+  "Validate command line arguments. Either return a map indicating the program
+  should exit (with a error message, and optional ok status), or a map
+  indicating the action the program should take and the options provided."
+  [args]
+  (let [{:keys [options errors summary]} (cli/parse-opts args cli-options)]
+    (println "-> " options errors summary)
+    (cond
+      (:help options) ; help => exit OK with usage summary
+      {:exit-message (usage summary) :ok? true}
+      errors ; errors => exit with description of errors
+      {:exit-message (error-msg errors)}
+      ;; custom validation
+      (nil? (:db-dir options))
+      {:exit-message "db-dir is required"}
+      (nil? (:output-dir options))
+      {:exit-message "output-dir is required"}
+      (nil? (:patent-dir options))
+      {:exit-message "patent-dir is required"}
+      :else ; all good
+      {:options options})))
+
+(defn exit [status msg]
+  (println msg)
+  (System/exit status))
+
+(comment
+  (validate-args ["asdf" "-n" "1" "--db-dir" "resources/db" "-o" "resources/output" "-p" "resources/dataset"]))
+
+(defn -main [& args]
+  (let [{:keys [action options exit-message ok?]} (validate-args args)]
+    (if exit-message
+      (exit (if ok? 0 1) exit-message)
+      (start! options))))
+
