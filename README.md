@@ -9,7 +9,7 @@ Java 8+
 
 ## Usage
 
-Grab a built jar file from [releases](/releases).
+Grab a built jar file from [releases](https://github.com/kongeor/xml-merger/releases).
 
 Execute as follows:
 
