@@ -148,7 +148,7 @@
   (let [limit folder-file-count
         offset (* batch-idx folder-file-count)
         folder (str output-dir "/" region "/" batch-idx)]
-    (log/info "Processing " region " batch id " batch-idx)
+    (log/info "Processing" region "batch id" batch-idx)
     (.mkdirs (java.io.File. folder))
     (reduce
       (fn [_ row]
@@ -168,10 +168,7 @@
 
 (defn process-region [ds output-dir n {:keys [region cnt]}]
   (let [batch-ids (range 0 (inc (int (/ cnt n))))]
-    (doall (pmap #(process-region-batch ds output-dir n region %) batch-ids))
-    #_(doall (map #(process-region-batch region %) batch-ids))))
-
-
+    (doall (pmap #(process-region-batch ds output-dir n region %) batch-ids))))
 
 #_(regions-counts-q ds-opts)
 
@@ -184,31 +181,43 @@
 (comment
   (process-regions))
 
+(defn check-existing-folders! [db-dir output-dir force]
+  (let [db-dir (java.io.File. db-dir)
+        output-dir (java.io.File. output-dir)]
+    (when
+      (or
+        (.exists db-dir)
+        (.exists output-dir))
+      (log/info "Database and/or output directories exist")
+      (if force
+        (do
+          (log/warn "Removing existing directories")
+          (.delete db-dir)
+          (.delete output-dir))
+        (do
+          (System/exit 1))))))
 
 (defn start! [opts]
-  (let [ds (jdbc/get-datasource {:dbtype "h2" :dbname (str (:db-dir opts) "/patents")})
-        ds-opts (jdbc/with-options ds {:builder-fn rs/as-unqualified-lower-maps})]
-    (create-tables ds-opts)
-    (process-dataset-files ds-opts (:patent-dir opts))
-    (process-patents ds)
-    (process-regions ds-opts (:output-dir opts) (:dir-file-count opts))))
+  (let [db-dir (:db-dir opts)
+        output-dir (:output-dir opts)
+        force (:force opts)]
+    (let [ds (jdbc/get-datasource {:dbtype "h2" :dbname (str db-dir "/patents")})
+          ds-opts (jdbc/with-options ds {:builder-fn rs/as-unqualified-lower-maps})]
+      (check-existing-folders! db-dir output-dir force)
+      (create-tables ds-opts)
+      (process-dataset-files ds-opts (:patent-dir opts))
+      (process-patents ds)
+      (process-regions ds-opts output-dir (:dir-file-count opts)))))
 
 ;; cli
 
 (defn usage [options-summary]
-  (->> ["This is my program. There are many like it, but this one is mine."
+  (->> ["A program to merge xml patent files, organize them per region and to break them down into folders."
         ""
-        "Usage: program-name [options] action"
+        "Usage: java -jar xml-merger.jar -n 2000 --db-dir temp/db -o temp/output -p temp/dataset"
         ""
         "Options:"
-        options-summary
-        ""
-        "Actions:"
-        "  start    Start a new server"
-        "  stop     Stop an existing server"
-        "  status   Print a server's status"
-        ""
-        "Please refer to the manual page for more information."]
+        options-summary]
     (string/join \newline)))
 
 (defn error-msg [errors]
@@ -218,15 +227,13 @@
 (def cli-options
   ;; An option with a required argument
   [["-d" "--db-dir DB_DIR" "Temporary database folder"
-    :validate [#(not
-                  (do
-                    (println ">" %)
-                    (nil? %)))]]
+    :validate [#(not (nil? %))]]
    ;; A non-idempotent option (:default is applied first)
    ["-p" "--patent-dir PATENT_DIR" "Patent directory. Folder containing folders such as CN20140101, US20140225 etc."]
    ["-o" "--output-dir OUT_DIR" "Output directory. Folder to store the grouped patents. "]
    ["-n" "--dir-file-count DIR_FILE_COUNT" "How many files each foldr should contain."
     :parse-fn #(Integer/parseInt %)]
+   ["-f" "--force" "Force the removal of existing output and database directories from potential previous runs."]
    ["-h" "--help"]])
 
 (defn validate-args
@@ -235,7 +242,6 @@
   indicating the action the program should take and the options provided."
   [args]
   (let [{:keys [options errors summary]} (cli/parse-opts args cli-options)]
-    (println "-> " options errors summary)
     (cond
       (:help options) ; help => exit OK with usage summary
       {:exit-message (usage summary) :ok? true}

@@ -2,7 +2,7 @@
 *.iml
 .idea
 
-resources/
+temp/
 .cpcache/
 
 out/

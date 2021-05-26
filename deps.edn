@@ -1,10 +1,12 @@
-{:deps {com.github.seancorfield/next.jdbc {:mvn/version "1.1.646"}
+{:paths ["src" "resources"]
+ :deps {com.github.seancorfield/next.jdbc {:mvn/version "1.1.646"}
         com.h2database/h2 {:mvn/version "1.4.200"}
         org.clojure/data.xml {:mvn/version "0.2.0-alpha6"}
         org.clojure/tools.cli {:mvn/version "1.0.206"}
-        org.slf4j/slf4j-simple {:mvn/version "1.7.5"}}
+        org.clojure/tools.logging {:mvn/version "1.1.0"}
+        log4j/log4j {:mvn/version "1.2.14"}}
 
- :aliases {
+:aliases {
            :uberjar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.0.216"}}
                      :exec-fn hf.depstar/uberjar
                      :exec-args {:aot true
