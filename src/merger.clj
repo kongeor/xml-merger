@@ -1,7 +1,8 @@
 (ns merger
   (:require [clojure.data.xml :as xml]
             [clojure.data.xml.node :refer [element]]
-            [clojure.java.io :as io])
+            [clojure.java.io :as io]
+            [clojure.string :as string])
   (:import (java.io FileWriter)))
 
 (defn parse-file [f]
@@ -21,6 +22,31 @@
 #_(with-open [out-file (FileWriter. "/home/kostas/temp/notes-merged.xml")]
   (xml/indent (element :notes nil [n1 n2]) out-file))
 
+#_(string/split-lines (slurp "/home/kostas/temp/note1.xml"))
+
+#_(first (string/split-lines (slurp "/home/kostas/projects/clojure/xml-merger/temp/dataset/KR20140109/KR/20140109/B1/000101/35/01/03/KR-101350103-B1.xml")))
+
+(def xml-preamble "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+(def patents-opening "<patent-documents>")
+(def patents-closing "</patent-documents>")
+
+(defn merge-and-write-as-txt [out-dir patent-id files]
+  (let [out-file (str out-dir "/" patent-id ".xml")
+        sb (StringBuilder. xml-preamble)
+        txts (->>
+               (map slurp files)
+               (map string/split-lines)
+               (map next))]
+    (.append sb patents-opening)
+    (doseq [ts txts]
+      (doseq [t ts]
+        (.append sb t)))
+    (.append sb patents-closing)
+    (spit out-file (.toString sb))))
+
+(comment
+  (let [fs ["/home/kostas/temp/note1.xml" "/home/kostas/temp/note2.xml"]]
+    (merge-and-write-as-txt "/home/kostas/temp" "as-txt" fs)))
 
 ;; TODO OS agnostic sep
 (defn merge-and-write [out-dir patent-id files]

@@ -153,7 +153,7 @@
     (reduce
       (fn [_ row]
         (let [files (patent-files-q ds (:patentid row))]
-          (merger/merge-and-write folder (:patentid row) (map :file files))))
+          (merger/merge-and-write-as-txt folder (:patentid row) (map :file files))))
       nil
       (jdbc/plan ds ["select region, patentid, from patents where region = ? limit ? offset ?" region limit offset]))))
 
@@ -181,6 +181,14 @@
 (comment
   (process-regions))
 
+(defn delete-recursively [fname]
+  (let [func (fn [func f]
+               (when (.isDirectory f)
+                 (doseq [f2 (.listFiles f)]
+                   (func func f2)))
+               (clojure.java.io/delete-file f))]
+    (func func (clojure.java.io/file fname))))
+
 (defn check-existing-folders! [db-dir output-dir force]
   (let [db-dir (java.io.File. db-dir)
         output-dir (java.io.File. output-dir)]
@@ -192,8 +200,8 @@
       (if force
         (do
           (log/warn "Removing existing directories")
-          (.delete db-dir)
-          (.delete output-dir))
+          (delete-recursively db-dir)
+          (delete-recursively output-dir))
         (do
           (System/exit 1))))))
 
