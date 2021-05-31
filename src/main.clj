@@ -5,6 +5,7 @@
             [next.jdbc.result-set :as rs]
             [clojure.tools.cli :as cli]
             [clojure.tools.logging :as log]
+            [progrock.core :as pr]
             [merger])
   (:gen-class))
 
@@ -102,18 +103,22 @@
 (comment
   (clojure.pprint/pprint (q ds-opts)))
 
-(def batch-size 200)
+(def file-batch-size 200)
 
 ;; processing
 
 (defn process-dataset-files [ds patent-dir]
   (let [all-files (filter valid-file? (filter xml-file? (file-seq (io/file patent-dir))))
-        batches (partition-all 200 all-files)]
-    (doall
-      (map-indexed
-        (fn [idx batch]
-          (clojure.tools.logging/info "Processing batch" idx)
-          (insert-files ds batch)) batches))))
+        batches (partition-all file-batch-size all-files)]
+    (log/info "Listing and storing all xml patent files in the db")
+    (loop [bar (pr/progress-bar (count batches))
+           batches batches]
+      (if-let [batch (first batches)]
+        (do
+          (pr/print bar)
+          (insert-files ds batch)
+          (recur (pr/tick bar) (next batches)))
+        (pr/print (pr/done bar))))))
 
 (comment
   (process-dataset-files))
@@ -129,6 +134,7 @@
   (jdbc/execute! ds ["select region, patentid, count(*) as cnt from files group by region, patentid having"]))
 
 (defn process-patents [ds]
+  (log/info "Grouping patents by id (in the db)")
   (reduce
     (fn [_ row]
       (jdbc/execute-one! ds
@@ -144,18 +150,30 @@
 
 #_(def output-dir "resources/output")
 
-(defn process-region-batch [ds output-dir folder-file-count region batch-idx]
+(defn process-region-batch [ds output-dir folder-file-count bar region batch-idx]
   (let [limit folder-file-count
         offset (* batch-idx folder-file-count)
         folder (str output-dir "/" region "/" batch-idx)]
-    (log/info "Processing" region "batch id" batch-idx)
+    #_(log/info "Processing" region "batch id" batch-idx)
     (.mkdirs (java.io.File. folder))
-    (reduce
-      (fn [_ row]
-        (let [files (patent-files-q ds (:patentid row))]
-          (merger/merge-and-write-as-txt folder (:patentid row) (map :file files))))
-      nil
-      (jdbc/plan ds ["select region, patentid, from patents where region = ? limit ? offset ?" region limit offset]))))
+    (let [rows
+          (reduce
+            (fn [acc row]
+              (let [files (patent-files-q ds (:patentid row))]
+                (merger/merge-and-write-as-txt folder (:patentid row) (map :file files))
+                (inc acc)))
+            0
+            (jdbc/plan ds ["select region, patentid, from patents where region = ? limit ? offset ?" region limit offset]))]
+      (reset! bar (pr/tick @bar rows))
+      (pr/print @bar))
+    ))
+
+(comment
+  (def b (atom (pr/progress-bar 100)))
+
+  (reset! b (pr/tick @b))
+
+  (pr/print @b))
 
 (comment
   (.mkdirs (java.io.File. "resources/output/yo1/man")))
@@ -166,17 +184,30 @@
 (defn regions-counts-q [ds]
   (jdbc/execute! ds ["select region, count(*) as cnt from patents group by region"]))
 
-(defn process-region [ds output-dir n {:keys [region cnt]}]
+(defn total-count-q [ds]
+  (jdbc/execute-one! ds ["select count(*) as cnt from patents"]))
+
+(comment
+  (let [ds (jdbc/get-datasource {:dbtype "h2" :dbname (str "/home/kostas/projects/clojure/xml-merger/temp/db/patents")})
+        ds (jdbc/with-options ds {:builder-fn rs/as-unqualified-lower-maps})]
+    (total-count-q ds)))
+
+(defn process-region [ds output-dir n bar {:keys [region cnt]}]
   (let [batch-ids (range 0 (inc (int (/ cnt n))))]
-    (doall (pmap #(process-region-batch ds output-dir n region %) batch-ids))))
+    (doall (pmap #(process-region-batch ds output-dir n bar region %) batch-ids))))
 
 #_(regions-counts-q ds-opts)
 
 #_(range (inc (int (/ 2300 1000))))
 
 (defn process-regions [ds output-dir n]
-  (let [regions (regions-counts-q ds)]
-    (doall (map #(process-region ds output-dir n %) regions))))
+  (let [regions (regions-counts-q ds)
+        total-cnt (:cnt (total-count-q ds))
+        bar (atom (pr/progress-bar total-cnt))]
+    (log/info "Processing" total-cnt "patents")
+    (doall (map #(process-region ds output-dir n bar %) regions))
+    (pr/print (pr/done @bar))
+    (log/info "Done ... :)")))
 
 (comment
   (process-regions))

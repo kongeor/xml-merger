@@ -31,18 +31,21 @@
 (def patents-closing "</patent-documents>")
 
 (defn merge-and-write-as-txt [out-dir patent-id files]
-  (let [out-file (str out-dir "/" patent-id ".xml")
-        sb (StringBuilder. xml-preamble)
-        txts (->>
-               (map slurp files)
-               (map string/split-lines)
-               (map next))]
-    (.append sb patents-opening)
-    (doseq [ts txts]
-      (doseq [t ts]
-        (.append sb t)))
-    (.append sb patents-closing)
-    (spit out-file (.toString sb))))
+  (let [out-file (str out-dir "/" patent-id ".xml")]
+    (if (> (count files) 1)
+      (let [
+            sb (StringBuilder. xml-preamble)
+            txts (->>
+                   (map slurp files)
+                   (map string/split-lines)
+                   (map next))]
+        (.append sb patents-opening)
+        (doseq [ts txts]
+          (doseq [t ts]
+            (.append sb t)))
+        (.append sb patents-closing)
+        (spit out-file (.toString sb)))
+      (io/copy (java.io.File. (first files)) (java.io.File. out-file)))))
 
 (comment
   (let [fs ["/home/kostas/temp/note1.xml" "/home/kostas/temp/note2.xml"]]
