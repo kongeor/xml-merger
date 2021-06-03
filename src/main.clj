@@ -194,7 +194,7 @@
 
 (defn process-region [ds output-dir n bar {:keys [region cnt]}]
   (let [batch-ids (range 0 (inc (int (/ cnt n))))]
-    (doall (pmap #(process-region-batch ds output-dir n bar region %) batch-ids))))
+    (doall (map #(process-region-batch ds output-dir n bar region %) batch-ids))))
 
 #_(regions-counts-q ds-opts)
 
