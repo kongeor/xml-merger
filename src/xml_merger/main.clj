@@ -1,4 +1,4 @@
-(ns main
+(ns xml-merger.main
   (:require [next.jdbc :as jdbc]
             [clojure.java.io :as io]
             [clojure.string :as string]
@@ -6,7 +6,7 @@
             [clojure.tools.cli :as cli]
             [clojure.tools.logging :as log]
             [progrock.core :as pr]
-            [merger])
+            [xml-merger.merger :as merger])
   (:gen-class))
 
 (defn xml-file? [f]
@@ -55,8 +55,11 @@
     id bigint auto_increment primary key,
     region varchar(2),
     patentid varchar(20),
+    files varchar(10000),
     count int
   );
+
+  create index if not exists patents_patentid_idx on patents(patentid);
 
   "]))
 
@@ -139,9 +142,10 @@
     (fn [_ row]
       (jdbc/execute-one! ds
         (concat
-          ["insert into patents(region, patentid, count) values(?, ?, ?)" (:region row) (:patentid row) (:cnt row)])))
+          ["insert into patents(region, patentid, files, count) values(?, ?, ?, ?)"
+           (:region row) (:patentid row) (:files row) (:cnt row)])))
     nil
-    (jdbc/plan ds ["select region, patentid, count(*) as cnt from files group by region, patentid"])))
+    (jdbc/plan ds ["select region, patentid, group_concat(file separator ';') as files, count(*) as cnt from files group by region, patentid"])))
 
 (comment
   (process-patents))
@@ -159,11 +163,19 @@
     (let [rows
           (reduce
             (fn [acc row]
-              (let [files (patent-files-q ds (:patentid row))]
-                (merger/merge-and-write-as-txt folder (:patentid row) (map :file files))
+              (let [                                        ; files (patent-files-q ds (:patentid row))
+                    files (string/split (:files row) #";")
+                    ]
+                (merger/merge-and-write-as-txt folder (:patentid row) files)
                 (inc acc)))
             0
-            (jdbc/plan ds ["select region, patentid, from patents where region = ? limit ? offset ?" region limit offset]))]
+            (jdbc/plan ds ["select region, patentid, files from patents where region = ? limit ? offset ?"
+                           #_"select p.region, p.patentid, group_concat(f.file separator ';') as files
+                            from patents p
+                            join files f ON p.patentid = f.patentid
+                            where p.region = ?
+                            group by p.patentid
+                            limit ? offset ?" region limit offset]))]
       (reset! bar (pr/tick @bar rows))
       (pr/print @bar))
     ))
@@ -217,7 +229,7 @@
                (when (.isDirectory f)
                  (doseq [f2 (.listFiles f)]
                    (func func f2)))
-               (clojure.java.io/delete-file f))]
+               (clojure.java.io/delete-file f true))]
     (func func (clojure.java.io/file fname))))
 
 (defn check-existing-folders! [db-dir output-dir force]
@@ -247,6 +259,13 @@
       (process-dataset-files ds-opts (:patent-dir opts))
       (process-patents ds)
       (process-regions ds-opts output-dir (:dir-file-count opts)))))
+
+(comment
+  (start! {:db-dir "/home/kostas/temp/xml-merger/db"
+           :output-dir "/home/kostas/temp/xml-merger/output"
+           :patent-dir "/home/kostas/temp/xml-merger/dataset"
+           :dir-file-count 10000
+           :force true}))
 
 ;; cli
 

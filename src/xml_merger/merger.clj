@@ -1,4 +1,4 @@
-(ns merger
+(ns xml-merger.merger
   (:require [clojure.data.xml :as xml]
             [clojure.data.xml.node :refer [element]]
             [clojure.java.io :as io]
